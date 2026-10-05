@@ -223,6 +223,8 @@ function startPaymentCheck(telegram, pesananId) {
           saveDB();
           
           await telegram.sendMessage(pesanan.userId, `✅ Pembayaran Otomatis berhasil dideteksi! Produk Anda sedang dikirim.`);
+        const produkDibeli = db.produk.find(p => p.id === db.pesanan[index].produk.id);
+        if (produkDibeli) { produkDibeli.stok = Math.max(0, (produkDibeli.stok || 0) - 1); fs.writeFileSync("./database.json", JSON.stringify(db, null, 2)); }
           await kirimPesananKePembeli(telegram, db.pesanan[index]);
         }
       } else if (new Date() > new Date(pesanan.expiredAt)) {
@@ -327,9 +329,9 @@ bot.command('addproduk', ctx => {
   if (ctx.from.id !== config.OWNER_ID) return ctx.reply('❌ Akses ditolak!', { parse_mode: 'HTML' });
   const args = ctx.message.text.slice(11).trim();
   if (!args || !args.includes(',')) return ctx.reply(escapeHTML(config.FORMAT_ADD), { parse_mode: 'HTML' });
-  const [nama, harga] = args.split(',').map(v => v.trim());
+  const [nama, harga, stok] = args.split(',').map(v => v.trim());
   if (!nama || !harga) return ctx.reply('❌ Nama/harga tidak boleh kosong!', { parse_mode: 'HTML' });
-  prosesTambah[ctx.from.id] = { tahap: 1, nama, harga: parseInt(harga) };
+  prosesTambah[ctx.from.id] = { tahap: 1, nama, harga: parseInt(harga), stok: parseInt(stok) || 0 };
   ctx.reply(escapeHTML(config.MOHON_DESKRIPSI), { parse_mode: 'HTML' });
 });
 
@@ -403,7 +405,10 @@ bot.action(/^beli_(\d+)$/, ctx => {
     ctx.reply('❌ Produk tidak ditemukan atau sudah dihapus!', { parse_mode: 'HTML' });
     return ctx.answerCbQuery();
   }
-
+if ((produk.stok || 0) <= 0) {
+    ctx.reply('❌ Maaf, stok produk ini habis!', { parse_mode: 'HTML' });
+    return ctx.answerCbQuery();
+}
   ctx.answerCbQuery();
   
   ctx.reply(`💳 <b>PILIH METODE PEMBAYARAN</b>\n\n📦 Produk: ${escapeHTML(produk.nama)}\n💰 Harga: Rp${produk.harga.toLocaleString('id-ID')}\n\nSilakan pilih metode pembayaran di bawah ini:`, {
@@ -420,7 +425,9 @@ bot.action(/^pay_auto_(\d+)$/, async ctx => {
   const produkId = parseInt(ctx.match[1]);
   const produk = db.produk.find(p => p.id === produkId);
   if (!produk) return ctx.answerCbQuery('❌ Produk tidak ditemukan!');
-
+if ((produk.stok || 0) <= 0) {
+    return ctx.answerCbQuery('❌ Maaf, stok habis!', { show_alert: true });
+}
   ctx.reply('⏳ Sedang men-generate QRIS Pembayaran Otomatis, mohon tunggu...', { parse_mode: 'HTML' });
   ctx.answerCbQuery();
 
@@ -513,6 +520,8 @@ bot.action(/^acc_(\d+)$/, async ctx => {
   const pesanan = db.pesanan[index];
   
   await ctx.editMessageCaption(ctx.callbackQuery.message.caption + `\n\n🟢 <b>STATUS: DISETUJUI & DIKIRIM!</b>`, { parse_mode: 'HTML' });
+        const produkDibeli = db.produk.find(p => p.id === pesanan.produk.id);
+        if (produkDibeli) { produkDibeli.stok = Math.max(0, (produkDibeli.stok || 0) - 1); fs.writeFileSync("./database.json", JSON.stringify(db, null, 2)); }
   
   await ctx.telegram.sendMessage(pesanan.userId, `✅ <b>Pembayaran Manual Anda telah disetujui oleh Owner!</b> Berikut adalah pesanan Anda:`, { parse_mode: 'HTML' });
   await kirimPesananKePembeli(ctx.telegram, pesanan);
@@ -658,6 +667,7 @@ bot.on(['text', 'photo', 'document', 'video'], async ctx => {
         id: Date.now(),
         nama: data.nama,
         harga: data.harga,
+        stok: data.stok || 0,
         deskripsi: data.deskripsi,
         isiTeks: data.isiTeks,
         isiFileId: data.isiFileId
